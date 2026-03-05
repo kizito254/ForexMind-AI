@@ -4,6 +4,9 @@ import math
 
 import numpy as np
 import pandas as pd
+from fastapi import HTTPException
+
+from .charting import write_equity_curve_image
 
 from .models import BacktestMetrics, BacktestRequest, BacktestResponse, StrategyDefinition
 
@@ -17,6 +20,19 @@ def _rsi(series: pd.Series, period: int) -> pd.Series:
 
 
 def _prepare_dataframe(request: BacktestRequest) -> pd.DataFrame:
+    if len(request.candles) < 30:
+        raise HTTPException(status_code=422, detail="At least 30 candles are required for backtesting.")
+
+    df = pd.DataFrame([c.model_dump() for c in request.candles]).sort_values("timestamp")
+    if df["close"].isna().any() or (df["close"] <= 0).any():
+        raise HTTPException(status_code=422, detail="Candle close prices must be positive and non-null.")
+
+    df["rsi"] = _rsi(df["close"], request.strategy.rsi_period)
+    df["ema"] = df["close"].ewm(span=request.strategy.ema_period, adjust=False).mean()
+    prepared = df.dropna().reset_index(drop=True)
+    if prepared.empty:
+        raise HTTPException(status_code=422, detail="Insufficient valid data after indicator warm-up.")
+    return prepared
     df = pd.DataFrame([c.model_dump() for c in request.candles]).sort_values("timestamp")
     df["rsi"] = _rsi(df["close"], request.strategy.rsi_period)
     df["ema"] = df["close"].ewm(span=request.strategy.ema_period, adjust=False).mean()
@@ -27,6 +43,7 @@ def run_backtest(request: BacktestRequest) -> BacktestResponse:
     df = _prepare_dataframe(request)
     strategy = request.strategy
 
+    balance = float(request.initial_balance)
     balance = request.initial_balance
     equity_curve = [balance]
     in_position = False
@@ -45,6 +62,11 @@ def run_backtest(request: BacktestRequest) -> BacktestResponse:
 
         if not in_position and buy_signal:
             in_position = True
+            entry_price = float(row["close"])
+            continue
+
+        if in_position:
+            pnl_pct = ((float(row["close"]) - entry_price) / entry_price) * 100
             entry_price = row["close"]
             continue
 
@@ -68,6 +90,7 @@ def run_backtest(request: BacktestRequest) -> BacktestResponse:
                 in_position = False
 
     if in_position:
+        final_price = float(df.iloc[-1]["close"])
         final_price = df.iloc[-1]["close"]
         pnl_pct = ((final_price - entry_price) / entry_price) * 100
         pnl = balance * (pnl_pct / 100)
@@ -88,6 +111,7 @@ def run_backtest(request: BacktestRequest) -> BacktestResponse:
     equity_series = pd.Series(equity_curve)
     rolling_peak = equity_series.cummax()
     drawdown = ((equity_series - rolling_peak) / rolling_peak) * 100
+    max_drawdown = abs(float(drawdown.min())) if not drawdown.empty else 0.0
     max_drawdown = abs(drawdown.min()) if not drawdown.empty else 0.0
 
     returns = equity_series.pct_change().dropna()
@@ -105,6 +129,9 @@ def run_backtest(request: BacktestRequest) -> BacktestResponse:
         sharpe_ratio=round(sharpe, 4),
         trades=total_trades,
     )
+    rounded_curve = [round(x, 2) for x in equity_curve]
+    image_path = write_equity_curve_image(rounded_curve)
+    return BacktestResponse(metrics=metrics, equity_curve=rounded_curve, chart_image_path=image_path)
     return BacktestResponse(metrics=metrics, equity_curve=[round(x, 2) for x in equity_curve])
 
 

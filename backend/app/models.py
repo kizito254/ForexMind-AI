@@ -51,6 +51,7 @@ class BacktestMetrics(BaseModel):
 class BacktestResponse(BaseModel):
     metrics: BacktestMetrics
     equity_curve: list[float]
+    chart_image_path: str | None = None
 
 
 class OptimizationRequest(BaseModel):
@@ -67,3 +68,29 @@ class OptimizationResponse(BaseModel):
     best_strategy: StrategyDefinition
     best_metrics: BacktestMetrics
     tried_combinations: int
+
+
+class DataFetchRequest(BaseModel):
+    pair: str = Field(..., examples=["EUR/USD"])
+    timeframe: str = Field("1H", examples=["1H", "4H"])
+    points: int = Field(300, ge=100, le=5000)
+
+
+class DataFetchResponse(BaseModel):
+    candles: list[Candle]
+    source: str
+
+
+class PipelineRequest(BaseModel):
+    pair: str = Field(..., examples=["EUR/USD"])
+    timeframe: str = Field("1H")
+    risk_tolerance: Literal["low", "medium", "high"] = "medium"
+    points: int = Field(300, ge=100, le=5000)
+    initial_balance: float = 10_000
+
+
+class PipelineResponse(BaseModel):
+    strategy: StrategyDefinition
+    backtest: BacktestResponse
+    optimizer: OptimizationResponse
+    data_source: str
