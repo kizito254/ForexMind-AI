@@ -14,6 +14,13 @@ from .models import (
     OptimizationResponse,
     PipelineRequest,
     PipelineResponse,
+
+from .backtester import run_backtest
+from .models import (
+    BacktestRequest,
+    BacktestResponse,
+    OptimizationRequest,
+    OptimizationResponse,
     StrategyDefinition,
     StrategyRequest,
 )
@@ -22,6 +29,7 @@ from .strategy_generator import generate_strategy
 
 app = FastAPI(title="AI Forex Strategy Builder", version="0.2.0")
 app.mount("/artifacts", StaticFiles(directory="backend/artifacts"), name="artifacts")
+app = FastAPI(title="AI Forex Strategy Builder", version="0.1.0")
 
 
 @app.get("/health")

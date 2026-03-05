@@ -7,6 +7,7 @@ import pandas as pd
 from fastapi import HTTPException
 
 from .charting import write_equity_curve_image
+
 from .models import BacktestMetrics, BacktestRequest, BacktestResponse, StrategyDefinition
 
 
@@ -32,6 +33,10 @@ def _prepare_dataframe(request: BacktestRequest) -> pd.DataFrame:
     if prepared.empty:
         raise HTTPException(status_code=422, detail="Insufficient valid data after indicator warm-up.")
     return prepared
+    df = pd.DataFrame([c.model_dump() for c in request.candles]).sort_values("timestamp")
+    df["rsi"] = _rsi(df["close"], request.strategy.rsi_period)
+    df["ema"] = df["close"].ewm(span=request.strategy.ema_period, adjust=False).mean()
+    return df.dropna().reset_index(drop=True)
 
 
 def run_backtest(request: BacktestRequest) -> BacktestResponse:
@@ -39,6 +44,7 @@ def run_backtest(request: BacktestRequest) -> BacktestResponse:
     strategy = request.strategy
 
     balance = float(request.initial_balance)
+    balance = request.initial_balance
     equity_curve = [balance]
     in_position = False
     entry_price = 0.0
@@ -61,6 +67,11 @@ def run_backtest(request: BacktestRequest) -> BacktestResponse:
 
         if in_position:
             pnl_pct = ((float(row["close"]) - entry_price) / entry_price) * 100
+            entry_price = row["close"]
+            continue
+
+        if in_position:
+            pnl_pct = ((row["close"] - entry_price) / entry_price) * 100
             exit_signal = (
                 row["rsi"] > strategy.rsi_sell_threshold
                 or pnl_pct <= -strategy.stop_loss_pct
@@ -80,6 +91,7 @@ def run_backtest(request: BacktestRequest) -> BacktestResponse:
 
     if in_position:
         final_price = float(df.iloc[-1]["close"])
+        final_price = df.iloc[-1]["close"]
         pnl_pct = ((final_price - entry_price) / entry_price) * 100
         pnl = balance * (pnl_pct / 100)
         balance += pnl
@@ -100,6 +112,7 @@ def run_backtest(request: BacktestRequest) -> BacktestResponse:
     rolling_peak = equity_series.cummax()
     drawdown = ((equity_series - rolling_peak) / rolling_peak) * 100
     max_drawdown = abs(float(drawdown.min())) if not drawdown.empty else 0.0
+    max_drawdown = abs(drawdown.min()) if not drawdown.empty else 0.0
 
     returns = equity_series.pct_change().dropna()
     sharpe = (
@@ -119,6 +132,7 @@ def run_backtest(request: BacktestRequest) -> BacktestResponse:
     rounded_curve = [round(x, 2) for x in equity_curve]
     image_path = write_equity_curve_image(rounded_curve)
     return BacktestResponse(metrics=metrics, equity_curve=rounded_curve, chart_image_path=image_path)
+    return BacktestResponse(metrics=metrics, equity_curve=[round(x, 2) for x in equity_curve])
 
 
 def strategy_with_params(base: StrategyDefinition, rsi_buy: int, rsi_sell: int, ema: int) -> StrategyDefinition:
